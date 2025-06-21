@@ -1,4 +1,3 @@
-// bot/sarvam.js
 const axios = require('axios');
 
 async function getSarvamResponse(prompt) {
@@ -6,9 +5,12 @@ async function getSarvamResponse(prompt) {
     const response = await axios.post(
       'https://api.sarvam.ai/v1/chat/completions',
       {
-        prompt: prompt,
-        model: "openhermes-2.5-mistral-7b", // or another supported model
-        max_tokens: 100
+        model: "sarvam-m", // Use the correct model name
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        max_tokens: 100,
+        // Optional: mode: "non-think" or "think" (if supported)
       },
       {
         headers: {
@@ -17,6 +19,10 @@ async function getSarvamResponse(prompt) {
         }
       }
     );
+    // Adjust based on Sarvam’s actual response structure
+    // Example: response.data.choices[0].message.content (if similar to OpenAI)
+    // If Sarvam returns differently, use the correct path
+    // For now, assuming it is similar to OpenAI:
     return response.data.choices[0].message.content;
   } catch (error) {
     console.error("Sarvam AI error:", error);

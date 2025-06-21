@@ -1,5 +1,4 @@
 node_modules
 Bot/.wwebjs_auth
 Bot/.wwebjs_cache
-.env
-.env.local
+
