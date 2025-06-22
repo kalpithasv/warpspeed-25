@@ -243,9 +243,12 @@ client.on("message", async (msg) => {
       return;
     }
     
+    // --- BUYER FLOW: BROWSE PRODUCTS WITH SARVAM AI ---
     if (/^(3|browse products|browse|shop)$/i.test(content)) {
+      currentState.flow = "buyer_browse";
+      currentState.step = "ai_intro";
       try {
-        await client.sendMessage(from, "🛍️ Browse our products feature coming soon! For now, you can contact our support team.");
+        await client.sendMessage(from, "🛍️ Welcome to our AI-powered product explorer!\n\nYou can:\n- Ask for products by category, price, or features\n- Type your needs (e.g., 'Show me shoes under 1000', 'I want a red dress', etc.)\n\nHow can I help you shop today?");
       } catch (err) {
         console.error("Error sending browse message:", err);
       }
@@ -261,6 +264,163 @@ client.on("message", async (msg) => {
       return;
     }
   }
+
+  // --- BUYER BROWSE FLOW WITH SARVAM AI ---
+  // ...existing code above...
+
+// --- BUYER BROWSE FLOW WITH SARVAM AI ---
+if (currentState.flow === "buyer_browse") {
+  // Step 1: On first message, fetch all products
+  if (currentState.step === "ai_intro") {
+    // Save the user's query for Sarvam
+    currentState.data.buyerQuery = content;
+    currentState.step = "ai_search";
+    // Fetch all products from Firestore
+    try {
+      const productsSnapshot = await getDocs(collection(db, "products"));
+      const products = [];
+      productsSnapshot.forEach(doc => {
+        products.push({ id: doc.id, ...doc.data() });
+      });
+      if (products.length === 0) {
+        await client.sendMessage(from, "Sorry, there are no products available right now.");
+        currentState.flow = null;
+        currentState.step = null;
+        return;
+      }
+      // Prepare a prompt for Sarvam AI
+      const productListForAI = products.map((p, idx) => 
+        `${idx + 1}. ${p.name} - ₹${p.price}${p.description ? ` (${p.description})` : ''}`
+      ).join('\n');
+      const sarvamPrompt = `
+A buyer on WhatsApp wants to shop. Here are the products in the store:
+${productListForAI}
+
+The buyer said: "${currentState.data.buyerQuery}"
+
+Your job:
+- ONLY show products that match what the buyer asked for (by name, type, or description).
+- If there is a clear match (e.g., buyer asks for "curd rice" and it's available), reply: "Yes, we have curd rice available!" and show only that product.
+- If there are multiple relevant products, show a short list (max 5) with product names and prices.
+- If nothing matches, politely say so and suggest the closest alternatives.
+- Do NOT list unrelated products.
+- End by asking if the buyer wants to buy or know more about any product.
+
+Reply in a friendly, concise way.
+`;
+      // Get Sarvam AI's response
+      const sarvamReply = await getSarvamResponse(sarvamPrompt);
+      // Save products in state for later reference
+      currentState.data.products = products;
+      await client.sendMessage(from, sarvamReply);
+      await client.sendMessage(from, "Reply with the product number or name to buy or know more!");
+    } catch (err) {
+      console.error("Error in buyer browse flow:", err);
+      await client.sendMessage(from, "❌ Error fetching products. Please try again later.");
+      currentState.flow = null;
+      currentState.step = null;
+    }
+    return;
+  }
+
+  // Step 2: Handle buyer's selection or follow-up query
+  if (currentState.step === "ai_search") {
+    const products = currentState.data.products || [];
+    let selectedProduct = null;
+
+    // Try to match by number
+    const num = parseInt(content);
+    if (!isNaN(num) && num > 0 && num <= products.length) {
+      selectedProduct = products[num - 1];
+    } else {
+      // Try to match by name (case-insensitive, partial match)
+      selectedProduct = products.find(p => p.name.toLowerCase() === content.toLowerCase());
+      if (!selectedProduct) {
+        // Try partial match
+        selectedProduct = products.find(p => p.name.toLowerCase().includes(content.toLowerCase()));
+      }
+    }
+
+    if (selectedProduct) {
+      // Show product details and ask if they want to buy
+      let productMsg = `*${selectedProduct.name}*\nPrice: ₹${selectedProduct.price}\n`;
+      if (selectedProduct.description) productMsg += `Description: ${selectedProduct.description}\n`;
+      if (selectedProduct.stock !== undefined) productMsg += `Stock: ${selectedProduct.stock} units\n`;
+      if (selectedProduct.images && selectedProduct.images.length > 0) {
+        // Send first image if available
+        try {
+          const imagePath = path.join(__dirname, selectedProduct.images[0]);
+          if (fs.existsSync(imagePath)) {
+            const media = MessageMedia.fromFilePath(imagePath);
+            await client.sendMessage(from, media, { caption: productMsg + "\nWould you like to buy this product? (yes/no)" });
+          } else {
+            await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
+          }
+        } catch (err) {
+          await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
+        }
+      } else {
+        await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
+      }
+      currentState.step = "ai_buy_confirm";
+      currentState.data.selectedProduct = selectedProduct;
+      return;
+    } else {
+      // If not matched, treat as a new query and ask Sarvam again
+      currentState.data.buyerQuery = content;
+      currentState.step = "ai_intro";
+      // Loop back to AI search
+      client.emit("message", msg); // Re-process as new query
+      return;
+    }
+  }
+
+  // Step 3: Confirm purchase intent
+  if (currentState.step === "ai_buy_confirm") {
+    if (/^(yes|y|buy|purchase)$/i.test(content)) {
+      // Ask for buyer's name and phone (if not already known)
+      currentState.step = "ai_buyer_details";
+      await client.sendMessage(from, "Great! Please share your name for the order:");
+      return;
+    } else if (/^(no|n|back|cancel)$/i.test(content)) {
+      await client.sendMessage(from, "No problem! You can ask for another product or type 'hi' to return to main menu.");
+      currentState.flow = null;
+      currentState.step = null;
+      currentState.data = {};
+      return;
+    } else {
+      await client.sendMessage(from, "Please reply 'yes' to buy or 'no' to cancel.");
+      return;
+    }
+  }
+
+  // Step 4: Collect buyer details and notify seller
+  if (currentState.step === "ai_buyer_details") {
+    currentState.data.buyerName = content;
+    // Optionally, you can ask for address or other info here
+    // Notify seller (find seller's WhatsApp ID from product)
+    try {
+      const selectedProduct = currentState.data.selectedProduct;
+      // Find seller in users collection
+      const sellerSnapshot = await getDocs(query(collection(db, "users"), where("uid", "==", selectedProduct.sellerId)));
+      let sellerWhatsappId = null;
+      sellerSnapshot.forEach(doc => {
+        sellerWhatsappId = doc.data().whatsappId;
+      });
+      if (sellerWhatsappId) {
+        await client.sendMessage(sellerWhatsappId, `🛒 *New Order Request!*\n\nProduct: ${selectedProduct.name}\nBuyer: ${currentState.data.buyerName}\nWhatsApp: ${from}\n\nPlease follow up with the buyer to complete the sale.`);
+      }
+      await client.sendMessage(from, "🎉 Your interest has been sent to the seller! They will contact you soon to complete your order.\n\nType 'hi' to return to main menu or ask for more products.");
+    } catch (err) {
+      await client.sendMessage(from, "❌ Error sending your order to the seller. Please try again later.");
+    }
+    currentState.flow = null;
+    currentState.step = null;
+    currentState.data = {};
+    return;
+  }
+}
+// ...rest of your code...
 
   // --- SELLER REGISTRATION FLOW ---
   if (currentState.flow === "seller_registration") {
