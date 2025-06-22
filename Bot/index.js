@@ -3,15 +3,15 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
-const { 
-  db, 
+const {
+  db,
   auth,
-  collection, 
-  addDoc, 
-  getDocs, 
-  doc, 
-  onSnapshot, 
-  query, 
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  onSnapshot,
+  query,
   where,
   setDoc,
   createUserWithEmailAndPassword,
@@ -60,11 +60,11 @@ async function saveImageFromWhatsApp(media, sellerId, productName) {
     const timestamp = Date.now();
     const fileName = `${sellerId}_${productName.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.${media.mimetype.split('/')[1]}`;
     const filePath = path.join(uploadsDir, fileName);
-    
+
     // Save the image data to file
     const buffer = Buffer.from(media.data, 'base64');
     fs.writeFileSync(filePath, buffer);
-    
+
     // Return the file path (in production, you'd upload to cloud storage and return URL)
     return `/uploads/${fileName}`;
   } catch (error) {
@@ -78,7 +78,7 @@ async function registerSeller(sellerData) {
     // Create user with Firebase Auth
     const userCredential = await createUserWithEmailAndPassword(auth, sellerData.email, sellerData.password);
     const user = userCredential.user;
-    
+
     // Store additional seller data in Firestore (without password)
     const sellerDoc = {
       uid: user.uid,
@@ -90,14 +90,14 @@ async function registerSeller(sellerData) {
       category: sellerData.category,
       description: sellerData.description || '',
       status: "pending",
-      role:"seller",
+      role: "seller",
       createdAt: new Date(),
       whatsappId: sellerData.whatsappId
     };
-    
+
     await setDoc(doc(db, "users", user.uid), sellerDoc);
     console.log("Seller registered successfully");
-    
+
     return { success: true, user, seller: sellerDoc };
   } catch (err) {
     console.error("Error registering seller:", err);
@@ -110,24 +110,24 @@ async function authenticateSeller(email, password) {
     // Sign in with Firebase Auth
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
-    
+
     // Get seller data from Firestore
     const sellerDoc = await getDocs(query(collection(db, "users"), where("uid", "==", user.uid)));
-    
+
     if (sellerDoc.empty) {
       return { success: false, message: "Seller profile not found" };
     }
-    
+
     let sellerData = null;
     sellerDoc.forEach(doc => {
       sellerData = { id: doc.id, ...doc.data() };
     });
-    
+
     return { success: true, user, seller: sellerData };
   } catch (err) {
     console.error("Error authenticating seller:", err);
     let errorMessage = "Authentication failed";
-    
+
     if (err.code === 'auth/user-not-found') {
       errorMessage = "No account found with this email";
     } else if (err.code === 'auth/wrong-password') {
@@ -135,7 +135,7 @@ async function authenticateSeller(email, password) {
     } else if (err.code === 'auth/invalid-email') {
       errorMessage = "Invalid email address";
     }
-    
+
     return { success: false, message: errorMessage };
   }
 }
@@ -181,12 +181,12 @@ client.on("message", async (msg) => {
 
   // Initialize user state if not exists
   if (!userState[from]) {
-    userState[from] = { 
-      flow: null, 
-      step: null, 
+    userState[from] = {
+      flow: null,
+      step: null,
       data: {},
       isLoggedIn: false,
-      seller: null 
+      seller: null
     };
   }
 
@@ -198,20 +198,20 @@ client.on("message", async (msg) => {
     currentState.flow = null;
     currentState.step = null;
     currentState.data = { ...currentState.data }; // Keep existing data like seller info
-    
+
     const welcomeMessage = showWelcomeMessage(
-      currentState.isLoggedIn, 
+      currentState.isLoggedIn,
       currentState.seller?.ownerName
     );
 
     try {
       await client.sendMessage(from, welcomeMessage);
-      
+
       // If logged in, set flow to dashboard
       if (currentState.isLoggedIn) {
         currentState.flow = "seller_dashboard";
       }
-      
+
       console.log("Welcome message sent successfully!");
     } catch (err) {
       console.error("Error sending welcome message:", err);
@@ -231,7 +231,7 @@ client.on("message", async (msg) => {
       }
       return;
     }
-    
+
     if (/^(2|login to seller profile|login|seller login)$/i.test(content)) {
       currentState.flow = "seller_login";
       currentState.step = "email";
@@ -242,7 +242,7 @@ client.on("message", async (msg) => {
       }
       return;
     }
-    
+
     // --- BUYER FLOW: BROWSE PRODUCTS WITH SARVAM AI ---
     if (/^(3|browse products|browse|shop)$/i.test(content)) {
       currentState.flow = "buyer_browse";
@@ -254,7 +254,7 @@ client.on("message", async (msg) => {
       }
       return;
     }
-    
+
     if (/^(4|get support|support|help)$/i.test(content)) {
       try {
         await client.sendMessage(from, "🎧 Our support team will contact you shortly to assist you. Thank you for your patience!");
@@ -268,31 +268,31 @@ client.on("message", async (msg) => {
   // --- BUYER BROWSE FLOW WITH SARVAM AI ---
   // ...existing code above...
 
-// --- BUYER BROWSE FLOW WITH SARVAM AI ---
-if (currentState.flow === "buyer_browse") {
-  // Step 1: On first message, fetch all products
-  if (currentState.step === "ai_intro") {
-    // Save the user's query for Sarvam
-    currentState.data.buyerQuery = content;
-    currentState.step = "ai_search";
-    // Fetch all products from Firestore
-    try {
-      const productsSnapshot = await getDocs(collection(db, "products"));
-      const products = [];
-      productsSnapshot.forEach(doc => {
-        products.push({ id: doc.id, ...doc.data() });
-      });
-      if (products.length === 0) {
-        await client.sendMessage(from, "Sorry, there are no products available right now.");
-        currentState.flow = null;
-        currentState.step = null;
-        return;
-      }
-      // Prepare a prompt for Sarvam AI
-      const productListForAI = products.map((p, idx) => 
-        `${idx + 1}. ${p.name} - ₹${p.price}${p.description ? ` (${p.description})` : ''}`
-      ).join('\n');
-      const sarvamPrompt = `
+  // --- BUYER BROWSE FLOW WITH SARVAM AI ---
+  if (currentState.flow === "buyer_browse") {
+    // Step 1: On first message, fetch all products
+    if (currentState.step === "ai_intro") {
+      // Save the user's query for Sarvam
+      currentState.data.buyerQuery = content;
+      currentState.step = "ai_search";
+      // Fetch all products from Firestore
+      try {
+        const productsSnapshot = await getDocs(collection(db, "products"));
+        const products = [];
+        productsSnapshot.forEach(doc => {
+          products.push({ id: doc.id, ...doc.data() });
+        });
+        if (products.length === 0) {
+          await client.sendMessage(from, "Sorry, there are no products available right now.");
+          currentState.flow = null;
+          currentState.step = null;
+          return;
+        }
+        // Prepare a prompt for Sarvam AI
+        const productListForAI = products.map((p, idx) =>
+          `${idx + 1}. ${p.name} - ₹${p.price}${p.description ? ` (${p.description})` : ''}`
+        ).join('\n');
+        const sarvamPrompt = `
 A buyer on WhatsApp wants to shop. Here are the products in the store:
 ${productListForAI}
 
@@ -308,119 +308,119 @@ Your job:
 
 Reply in a friendly, concise way.
 `;
-      // Get Sarvam AI's response
-      const sarvamReply = await getSarvamResponse(sarvamPrompt);
-      // Save products in state for later reference
-      currentState.data.products = products;
-      await client.sendMessage(from, sarvamReply);
-      await client.sendMessage(from, "Reply with the product number or name to buy or know more!");
-    } catch (err) {
-      console.error("Error in buyer browse flow:", err);
-      await client.sendMessage(from, "❌ Error fetching products. Please try again later.");
-      currentState.flow = null;
-      currentState.step = null;
-    }
-    return;
-  }
-
-  // Step 2: Handle buyer's selection or follow-up query
-  if (currentState.step === "ai_search") {
-    const products = currentState.data.products || [];
-    let selectedProduct = null;
-
-    // Try to match by number
-    const num = parseInt(content);
-    if (!isNaN(num) && num > 0 && num <= products.length) {
-      selectedProduct = products[num - 1];
-    } else {
-      // Try to match by name (case-insensitive, partial match)
-      selectedProduct = products.find(p => p.name.toLowerCase() === content.toLowerCase());
-      if (!selectedProduct) {
-        // Try partial match
-        selectedProduct = products.find(p => p.name.toLowerCase().includes(content.toLowerCase()));
+        // Get Sarvam AI's response
+        const sarvamReply = await getSarvamResponse(sarvamPrompt);
+        // Save products in state for later reference
+        currentState.data.products = products;
+        await client.sendMessage(from, sarvamReply);
+        await client.sendMessage(from, "Reply with the product number or name to buy or know more!");
+      } catch (err) {
+        console.error("Error in buyer browse flow:", err);
+        await client.sendMessage(from, "❌ Error fetching products. Please try again later.");
+        currentState.flow = null;
+        currentState.step = null;
       }
+      return;
     }
 
-    if (selectedProduct) {
-      // Show product details and ask if they want to buy
-      let productMsg = `*${selectedProduct.name}*\nPrice: ₹${selectedProduct.price}\n`;
-      if (selectedProduct.description) productMsg += `Description: ${selectedProduct.description}\n`;
-      if (selectedProduct.stock !== undefined) productMsg += `Stock: ${selectedProduct.stock} units\n`;
-      if (selectedProduct.images && selectedProduct.images.length > 0) {
-        // Send first image if available
-        try {
-          const imagePath = path.join(__dirname, selectedProduct.images[0]);
-          if (fs.existsSync(imagePath)) {
-            const media = MessageMedia.fromFilePath(imagePath);
-            await client.sendMessage(from, media, { caption: productMsg + "\nWould you like to buy this product? (yes/no)" });
-          } else {
+    // Step 2: Handle buyer's selection or follow-up query
+    if (currentState.step === "ai_search") {
+      const products = currentState.data.products || [];
+      let selectedProduct = null;
+
+      // Try to match by number
+      const num = parseInt(content);
+      if (!isNaN(num) && num > 0 && num <= products.length) {
+        selectedProduct = products[num - 1];
+      } else {
+        // Try to match by name (case-insensitive, partial match)
+        selectedProduct = products.find(p => p.name.toLowerCase() === content.toLowerCase());
+        if (!selectedProduct) {
+          // Try partial match
+          selectedProduct = products.find(p => p.name.toLowerCase().includes(content.toLowerCase()));
+        }
+      }
+
+      if (selectedProduct) {
+        // Show product details and ask if they want to buy
+        let productMsg = `*${selectedProduct.name}*\nPrice: ₹${selectedProduct.price}\n`;
+        if (selectedProduct.description) productMsg += `Description: ${selectedProduct.description}\n`;
+        if (selectedProduct.stock !== undefined) productMsg += `Stock: ${selectedProduct.stock} units\n`;
+        if (selectedProduct.images && selectedProduct.images.length > 0) {
+          // Send first image if available
+          try {
+            const imagePath = path.join(__dirname, selectedProduct.images[0]);
+            if (fs.existsSync(imagePath)) {
+              const media = MessageMedia.fromFilePath(imagePath);
+              await client.sendMessage(from, media, { caption: productMsg + "\nWould you like to buy this product? (yes/no)" });
+            } else {
+              await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
+            }
+          } catch (err) {
             await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
           }
-        } catch (err) {
+        } else {
           await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
         }
+        currentState.step = "ai_buy_confirm";
+        currentState.data.selectedProduct = selectedProduct;
+        return;
       } else {
-        await client.sendMessage(from, productMsg + "\nWould you like to buy this product? (yes/no)");
+        // If not matched, treat as a new query and ask Sarvam again
+        currentState.data.buyerQuery = content;
+        currentState.step = "ai_intro";
+        // Loop back to AI search
+        client.emit("message", msg); // Re-process as new query
+        return;
       }
-      currentState.step = "ai_buy_confirm";
-      currentState.data.selectedProduct = selectedProduct;
-      return;
-    } else {
-      // If not matched, treat as a new query and ask Sarvam again
-      currentState.data.buyerQuery = content;
-      currentState.step = "ai_intro";
-      // Loop back to AI search
-      client.emit("message", msg); // Re-process as new query
-      return;
     }
-  }
 
-  // Step 3: Confirm purchase intent
-  if (currentState.step === "ai_buy_confirm") {
-    if (/^(yes|y|buy|purchase)$/i.test(content)) {
-      // Ask for buyer's name and phone (if not already known)
-      currentState.step = "ai_buyer_details";
-      await client.sendMessage(from, "Great! Please share your name for the order:");
-      return;
-    } else if (/^(no|n|back|cancel)$/i.test(content)) {
-      await client.sendMessage(from, "No problem! You can ask for another product or type 'hi' to return to main menu.");
+    // Step 3: Confirm purchase intent
+    if (currentState.step === "ai_buy_confirm") {
+      if (/^(yes|y|buy|purchase)$/i.test(content)) {
+        // Ask for buyer's name and phone (if not already known)
+        currentState.step = "ai_buyer_details";
+        await client.sendMessage(from, "Great! Please share your name for the order:");
+        return;
+      } else if (/^(no|n|back|cancel)$/i.test(content)) {
+        await client.sendMessage(from, "No problem! You can ask for another product or type 'hi' to return to main menu.");
+        currentState.flow = null;
+        currentState.step = null;
+        currentState.data = {};
+        return;
+      } else {
+        await client.sendMessage(from, "Please reply 'yes' to buy or 'no' to cancel.");
+        return;
+      }
+    }
+
+    // Step 4: Collect buyer details and notify seller
+    if (currentState.step === "ai_buyer_details") {
+      currentState.data.buyerName = content;
+      // Optionally, you can ask for address or other info here
+      // Notify seller (find seller's WhatsApp ID from product)
+      try {
+        const selectedProduct = currentState.data.selectedProduct;
+        // Find seller in users collection
+        const sellerSnapshot = await getDocs(query(collection(db, "users"), where("uid", "==", selectedProduct.sellerId)));
+        let sellerWhatsappId = null;
+        sellerSnapshot.forEach(doc => {
+          sellerWhatsappId = doc.data().whatsappId;
+        });
+        if (sellerWhatsappId) {
+          await client.sendMessage(sellerWhatsappId, `🛒 *New Order Request!*\n\nProduct: ${selectedProduct.name}\nBuyer: ${currentState.data.buyerName}\nWhatsApp: ${from}\n\nPlease follow up with the buyer to complete the sale.`);
+        }
+        await client.sendMessage(from, "🎉 Your interest has been sent to the seller! They will contact you soon to complete your order.\n\nType 'hi' to return to main menu or ask for more products.");
+      } catch (err) {
+        await client.sendMessage(from, "❌ Error sending your order to the seller. Please try again later.");
+      }
       currentState.flow = null;
       currentState.step = null;
       currentState.data = {};
       return;
-    } else {
-      await client.sendMessage(from, "Please reply 'yes' to buy or 'no' to cancel.");
-      return;
     }
   }
-
-  // Step 4: Collect buyer details and notify seller
-  if (currentState.step === "ai_buyer_details") {
-    currentState.data.buyerName = content;
-    // Optionally, you can ask for address or other info here
-    // Notify seller (find seller's WhatsApp ID from product)
-    try {
-      const selectedProduct = currentState.data.selectedProduct;
-      // Find seller in users collection
-      const sellerSnapshot = await getDocs(query(collection(db, "users"), where("uid", "==", selectedProduct.sellerId)));
-      let sellerWhatsappId = null;
-      sellerSnapshot.forEach(doc => {
-        sellerWhatsappId = doc.data().whatsappId;
-      });
-      if (sellerWhatsappId) {
-        await client.sendMessage(sellerWhatsappId, `🛒 *New Order Request!*\n\nProduct: ${selectedProduct.name}\nBuyer: ${currentState.data.buyerName}\nWhatsApp: ${from}\n\nPlease follow up with the buyer to complete the sale.`);
-      }
-      await client.sendMessage(from, "🎉 Your interest has been sent to the seller! They will contact you soon to complete your order.\n\nType 'hi' to return to main menu or ask for more products.");
-    } catch (err) {
-      await client.sendMessage(from, "❌ Error sending your order to the seller. Please try again later.");
-    }
-    currentState.flow = null;
-    currentState.step = null;
-    currentState.data = {};
-    return;
-  }
-}
-// ...rest of your code...
+  // ...rest of your code...
 
   // --- SELLER REGISTRATION FLOW ---
   if (currentState.flow === "seller_registration") {
@@ -434,7 +434,7 @@ Reply in a friendly, concise way.
         }
         return;
       }
-      
+
       currentState.data.email = content;
       currentState.step = "password";
       try {
@@ -444,7 +444,7 @@ Reply in a friendly, concise way.
       }
       return;
     }
-    
+
     if (currentState.step === "password") {
       if (content.length < 6) {
         try {
@@ -454,7 +454,7 @@ Reply in a friendly, concise way.
         }
         return;
       }
-      
+
       currentState.data.password = content;
       currentState.step = "businessName";
       try {
@@ -464,7 +464,7 @@ Reply in a friendly, concise way.
       }
       return;
     }
-    
+
     if (currentState.step === "businessName") {
       currentState.data.businessName = content;
       currentState.step = "ownerName";
@@ -475,7 +475,7 @@ Reply in a friendly, concise way.
       }
       return;
     }
-    
+
     if (currentState.step === "ownerName") {
       currentState.data.ownerName = content;
       currentState.step = "address";
@@ -486,7 +486,7 @@ Reply in a friendly, concise way.
       }
       return;
     }
-    
+
     if (currentState.step === "address") {
       currentState.data.address = content;
       currentState.step = "category";
@@ -497,7 +497,7 @@ Reply in a friendly, concise way.
       }
       return;
     }
-    
+
     if (currentState.step === "category") {
       currentState.data.category = content;
       currentState.step = "description";
@@ -508,10 +508,10 @@ Reply in a friendly, concise way.
       }
       return;
     }
-    
+
     if (currentState.step === "description") {
       const description = content.toLowerCase() === 'skip' ? '' : content;
-      
+
       const sellerData = {
         email: currentState.data.email,
         password: currentState.data.password,
@@ -523,10 +523,10 @@ Reply in a friendly, concise way.
         description: description,
         whatsappId: from
       };
-      
+
       try {
         const result = await registerSeller(sellerData);
-        
+
         if (result.success) {
           // Auto-login after successful registration
           currentState.isLoggedIn = true;
@@ -534,7 +534,7 @@ Reply in a friendly, concise way.
           currentState.flow = "seller_dashboard";
           currentState.step = null;
           currentState.data = { seller: result.seller, user: result.user };
-          
+
           await client.sendMessage(from, `✅ Registration successful! 
 
 Your seller account has been created with:
@@ -560,7 +560,7 @@ Please reply with the number or option name.`);
           currentState.step = null;
           currentState.data = {};
         }
-        
+
       } catch (err) {
         console.error("Error saving seller:", err);
         await client.sendMessage(from, "❌ Sorry, there was an error saving your information. Please try again later.");
@@ -581,7 +581,7 @@ Please reply with the number or option name.`);
         }
         return;
       }
-      
+
       currentState.data.email = content;
       currentState.step = "password";
       try {
@@ -591,13 +591,13 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (currentState.step === "password") {
       const authResult = await authenticateSeller(currentState.data.email, content);
-      
+
       if (authResult.success) {
         const seller = authResult.seller;
-        
+
         // Set persistent login state
         currentState.isLoggedIn = true;
         currentState.seller = seller;
@@ -605,7 +605,7 @@ Please reply with the number or option name.`);
         currentState.data.user = authResult.user;
         currentState.flow = "seller_dashboard";
         currentState.step = null;
-        
+
         try {
           await client.sendMessage(from, `✅ Login successful! 
 
@@ -650,12 +650,12 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (/^(2|view my products)$/i.test(content)) {
       try {
         const q = query(collection(db, "products"), where("sellerId", "==", currentState.seller.uid));
         const querySnapshot = await getDocs(q);
-        
+
         if (querySnapshot.empty) {
           await client.sendMessage(from, "📦 You haven't added any products yet.\n\nType '1' to add products or 'hi' for main menu.");
         } else {
@@ -677,7 +677,7 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (/^(3|update profile)$/i.test(content)) {
       try {
         await client.sendMessage(from, "🔧 Profile update feature coming soon!\n\nType 'hi' to return to main menu.");
@@ -686,18 +686,18 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (/^(4|logout)$/i.test(content)) {
       try {
         await signOut(auth);
-        
+
         // Clear login state
         currentState.isLoggedIn = false;
         currentState.seller = null;
         currentState.flow = null;
         currentState.step = null;
         currentState.data = {};
-        
+
         await client.sendMessage(from, "👋 You have been logged out successfully!\n\nType 'hi' to return to main menu.");
       } catch (err) {
         console.error("Error logging out:", err);
@@ -705,7 +705,7 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     // --- STEP-BY-STEP PRODUCT ADDITION ---
     if (currentState.step === "product_name") {
       currentState.data.currentProduct.name = content;
@@ -717,7 +717,7 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (currentState.step === "product_price") {
       const price = parseInt(content);
       if (isNaN(price) || price <= 0) {
@@ -728,7 +728,7 @@ Please reply with the number or option name.`);
         }
         return;
       }
-      
+
       currentState.data.currentProduct.price = price;
       currentState.step = "product_description";
       try {
@@ -738,7 +738,7 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (currentState.step === "product_description") {
       const description = content.toLowerCase() === 'skip' ? '' : content;
       currentState.data.currentProduct.description = description;
@@ -750,7 +750,7 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (currentState.step === "product_stock") {
       const stock = parseInt(content);
       if (isNaN(stock) || stock < 0) {
@@ -761,7 +761,7 @@ Please reply with the number or option name.`);
         }
         return;
       }
-      
+
       currentState.data.currentProduct.stock = stock;
       currentState.step = "product_images";
       currentState.data.currentProduct.images = [];
@@ -772,7 +772,7 @@ Please reply with the number or option name.`);
       }
       return;
     }
-    
+
     if (currentState.step === "product_images") {
       // Check if user wants to finish or skip
       if (content.toLowerCase() === 'done' || content.toLowerCase() === 'skip') {
@@ -786,35 +786,39 @@ Please reply with the number or option name.`);
             images: currentState.data.currentProduct.images || [],
             category: currentState.seller.category,
             stock: currentState.data.currentProduct.stock,
-            createdAt: new Date()
+            isActive: true,
+            createdAt: new Date(),
+            updatedAt: new Date()
           };
-          
-          await addDoc(collection(db, "products"), productData);
-          
+
+          const docRef = await addDoc(collection(db, "products"), productData);
+          // Update the same document with its generated ID
+          await setDoc(docRef, { ...productData, id: docRef.id });
+
           const confirmationMessage = `✅ Product added successfully!\n\n📦 *${productData.name}*\n💰 Price: ₹${productData.price}\n📝 Description: ${productData.description || 'None'}\n📦 Stock: ${productData.stock} units\n🖼️ Images: ${productData.images.length} uploaded\n\nWhat would you like to do next?\n\n1️⃣ Add Another Product\n2️⃣ View My Products\n3️⃣ Back to Dashboard (type 'hi')`;
-          
+
           await client.sendMessage(from, confirmationMessage);
-          
+
           // Reset to dashboard
           currentState.step = null;
           currentState.data.currentProduct = {};
-          
+
         } catch (err) {
           console.error("Error saving product:", err);
           await client.sendMessage(from, "❌ Error saving product. Please try again.");
         }
         return;
       }
-      
+
       // Check if message has media (image)
       if (msg.hasMedia) {
         try {
           const media = await msg.downloadMedia();
-          
+
           if (media.mimetype.startsWith('image/')) {
             // Save image
             const imagePath = await saveImageFromWhatsApp(media, currentState.seller.uid, currentState.data.currentProduct.name);
-            
+
             if (imagePath) {
               currentState.data.currentProduct.images.push(imagePath);
               await client.sendMessage(from, `✅ Image ${currentState.data.currentProduct.images.length} uploaded successfully!\n\nSend more images or type 'done' to finish.`);
@@ -830,7 +834,7 @@ Please reply with the number or option name.`);
         }
         return;
       }
-      
+
       // If no media and not done/skip command
       try {
         await client.sendMessage(from, "📸 Please send an image, or type 'done' to finish or 'skip' to add product without images.");
