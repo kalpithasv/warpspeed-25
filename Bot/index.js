@@ -407,6 +407,27 @@ Reply in a friendly, concise way.
         sellerSnapshot.forEach(doc => {
           sellerWhatsappId = doc.data().whatsappId;
         });
+
+        // --- ADD THIS BLOCK: Store order in Firestore ---
+        const orderData = {
+          sellerId: selectedProduct.sellerId,
+          customerPhone: from,
+          customerName: currentState.data.buyerName,
+          products: [{
+            productId: selectedProduct.id,
+            productName: selectedProduct.name,
+            quantity: 1,
+            price: selectedProduct.price
+          }],
+          total: selectedProduct.price,
+          status: 'pending',
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+        const orderRef = await addDoc(collection(db, "orders"), orderData);
+        await setDoc(orderRef, { ...orderData, id: orderRef.id });
+        // --- END BLOCK --
+
         if (sellerWhatsappId) {
           await client.sendMessage(sellerWhatsappId, `🛒 *New Order Request!*\n\nProduct: ${selectedProduct.name}\nBuyer: ${currentState.data.buyerName}\nWhatsApp: ${from}\n\nPlease follow up with the buyer to complete the sale.`);
         }
